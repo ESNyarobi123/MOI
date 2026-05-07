@@ -4,6 +4,7 @@ import { applyPineconeBoost } from "@/lib/ai/pinecone-boost";
 import { haversineKm } from "@/lib/location/geo";
 import { prisma } from "@/lib/db/prisma";
 import { notificationService } from "@/services/notification.service";
+import { userService } from "@/services/user.service";
 import { AppError } from "@/utils/app-error";
 
 export type MatchCandidate = {
@@ -14,6 +15,10 @@ export type MatchCandidate = {
   country: string;
   compatibilityScore: number;
   distanceKm: number | null;
+  bio?: string;
+  photoUrl?: string;
+  tags?: string[];
+  isVerified?: boolean;
 };
 
 type SwipeInput = {
@@ -40,6 +45,8 @@ function isPositiveAction(action: SwipeAction | undefined) {
 
 export class MatchingService {
   async getFeed(userId: string, options: FeedOptions = {}): Promise<MatchCandidate[]> {
+    await userService.ensureLegacyAgeBackfillByUserId(userId);
+
     const actor = await prisma.user.findUnique({
       where: { id: userId },
       include: {
@@ -68,6 +75,15 @@ export class MatchingService {
     });
     const swipedIds = new Set(swipes.map((s) => s.targetUserId));
 
+    const likesToMe = await prisma.swipe.findMany({
+      where: {
+        targetUserId: userId,
+        action: { in: ["LIKE", "SUPERLIKE"] }
+      },
+      select: { actorUserId: true }
+    });
+    const likedMeIds = new Set(likesToMe.map((s) => s.actorUserId));
+
     const excludeIds = [userId, ...blockedIds, ...swipedIds];
     const where: Prisma.UserWhereInput = {
       id: { notIn: excludeIds },
@@ -82,7 +98,9 @@ export class MatchingService {
       where,
       include: {
         profile: true,
-        interests: { include: { interest: true } }
+        interests: { include: { interest: true } },
+        media: { orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }], take: 4 },
+        verificationRecords: { where: { status: "APPROVED" }, take: 1 }
       },
       take: 200
     });
@@ -147,7 +165,30 @@ export class MatchingService {
       let compatibilityScore =
         jaccard * 0.42 + lfScore * 0.28 + distScore * 0.25 + ageScore * 0.05;
 
+      // Reciprocal interest: they already liked you → surface them sooner (match funnel)
+      if (likedMeIds.has(u.id)) {
+        compatibilityScore += 0.18;
+      }
+
+      // Newbie boost (~48h): new profiles get extra visibility (retention / dopamine loop)
+      const accountAgeMs = Date.now() - u.createdAt.getTime();
+      if (accountAgeMs >= 0 && accountAgeMs < 48 * 60 * 60 * 1000) {
+        compatibilityScore += 0.12;
+      }
+
+      // Activity: recently online → slight priority
+      if (u.lastSeenAt) {
+        const seenMs = Date.now() - u.lastSeenAt.getTime();
+        if (seenMs >= 0 && seenMs < 30 * 60 * 1000) {
+          compatibilityScore += 0.05;
+        }
+      }
+
       compatibilityScore = Math.min(1, Math.max(0, compatibilityScore));
+
+      const photoUrl = u.media[0]?.url;
+      const tags = u.interests.map((i) => i.interest.label);
+      const isVerified = u.emailVerified || u.verificationRecords.length > 0;
 
       scored.push({
         userId: u.id,
@@ -156,7 +197,11 @@ export class MatchingService {
         city: u.profile.city,
         country: u.profile.country,
         compatibilityScore,
-        distanceKm
+        distanceKm,
+        bio: u.profile.bio ?? undefined,
+        photoUrl: photoUrl ?? undefined,
+        tags: tags.length ? tags : undefined,
+        isVerified
       });
     }
 

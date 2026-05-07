@@ -29,6 +29,22 @@ export async function GET(request: NextRequest) {
       countrywide,
       radiusKm
     });
-    return ok({ items: feed, filters: { countrywide, radiusKm } }, requestId);
+
+    const profiles = feed.map((c) => ({
+      userId: c.userId,
+      name: c.fullName,
+      age: c.age,
+      bio: c.bio,
+      photoUrl: c.photoUrl,
+      distance: c.distanceKm ?? undefined,
+      tags: c.tags ?? [],
+      compatibilityScore: Math.round(c.compatibilityScore * 100),
+      isVerified: Boolean(c.isVerified)
+    }));
+
+    return ok(
+      { items: feed, profiles, filters: { countrywide, radiusKm } },
+      requestId
+    );
   });
 }

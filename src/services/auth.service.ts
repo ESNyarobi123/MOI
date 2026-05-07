@@ -10,6 +10,7 @@ import { hashPassword, verifyPassword } from "@/lib/auth/password";
 import { generateRefreshTokenRaw, hashRefreshToken } from "@/lib/auth/refresh-token";
 import { prisma } from "@/lib/db/prisma";
 import { sendRegistrationOtp } from "@/lib/notifications/email-otp";
+import { matchingVectorService } from "@/services/matching-vector.service";
 import { AppError } from "@/utils/app-error";
 
 const OTP_PURPOSE_REGISTER = "REGISTER_VERIFY";
@@ -202,6 +203,22 @@ export class AuthService {
     return this.issueTokenPair(user.id, user.email);
   }
 
+  /** Save Google avatar as primary photo when user has no media yet */
+  private async attachGoogleProfilePhoto(userId: string, pictureUrl: string | null | undefined) {
+    const url = pictureUrl?.trim();
+    if (!url) return;
+    const count = await prisma.userMedia.count({ where: { userId } });
+    if (count > 0) return;
+    await prisma.userMedia.create({
+      data: {
+        userId,
+        url,
+        mediaType: "image",
+        isPrimary: true
+      }
+    });
+  }
+
   async loginWithGoogle(input: GoogleOAuthInput) {
     let accessToken = input.accessToken?.trim() || "";
     if (!accessToken && input.code?.trim()) {
@@ -248,6 +265,7 @@ export class AuthService {
           emailVerified: true
         }
       });
+      await this.attachGoogleProfilePhoto(updated.id, profile.picture);
       return this.issueTokenPair(updated.id, updated.email!);
     }
 
@@ -276,6 +294,8 @@ export class AuthService {
       }
     });
 
+    await this.attachGoogleProfilePhoto(created.id, profile.picture);
+
     return this.issueTokenPair(created.id, created.email!);
   }
 
@@ -292,6 +312,7 @@ export class AuthService {
         where: { id: byEmail.id },
         data: { googleId: byEmail.googleId ?? profile.sub, emailVerified: true }
       });
+      await this.attachGoogleProfilePhoto(updated.id, profile.picture);
       return this.issueTokenPair(updated.id, updated.email!);
     }
 
@@ -318,6 +339,7 @@ export class AuthService {
         }
       }
     });
+    await this.attachGoogleProfilePhoto(created.id, profile.picture);
     return this.issueTokenPair(created.id, created.email!);
   }
 
@@ -349,7 +371,7 @@ export class AuthService {
     return { loggedOut: true };
   }
 
-  async verifyAge(userId: string, age: number) {
+  async verifyAge(userId: string, age: number, dateOfBirthIso?: string) {
     const isAllowed = age >= 18;
     await prisma.user.update({
       where: { id: userId },
@@ -358,6 +380,25 @@ export class AuthService {
         ageVerifiedAt: isAllowed ? new Date() : null
       }
     });
+
+    if (isAllowed) {
+      let dob: Date | null = null;
+      if (dateOfBirthIso && typeof dateOfBirthIso === "string") {
+        const parsed = new Date(dateOfBirthIso);
+        if (!Number.isNaN(parsed.getTime())) {
+          dob = parsed;
+        }
+      }
+      if (!dob) {
+        const y = new Date().getFullYear() - age;
+        dob = new Date(Date.UTC(y, 0, 15, 12, 0, 0, 0));
+      }
+      await prisma.userProfile.update({
+        where: { userId },
+        data: { dateOfBirth: dob }
+      });
+      matchingVectorService.scheduleSync(userId);
+    }
 
     return {
       userId,

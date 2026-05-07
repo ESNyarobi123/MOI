@@ -1,4 +1,4 @@
-import type { UserMedia } from "@prisma/client";
+import type { User, UserMedia } from "@prisma/client";
 import { Gender, LookingFor } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
 import { matchingVectorService } from "@/services/matching-vector.service";
@@ -30,9 +30,49 @@ export type UserProfile = {
   stats?: { matches: number; likes: number; chats: number };
   /** 0–100, for “profile strength” UI */
   profileCompletion?: number;
+  /** Trust / age gate — required before user appears in others’ discover feed */
+  isAgeVerified?: boolean;
+  /** True until age gate completed (OAuth users start here) */
+  needsOnboarding?: boolean;
 };
 
 export class UserService {
+  /**
+   * Users who signed up with email/password already declared age at registration; older DB rows may
+   * still have isAgeVerified=false from schema defaults. One-time sync so they skip OAuth onboarding
+   * and appear in discover for others.
+   */
+  async ensureLegacyAgeBackfillByUserId(userId: string): Promise<void> {
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      include: { profile: true }
+    });
+    if (user?.profile) {
+      await this.backfillLegacyAgeVerification(user);
+    }
+  }
+
+  private ageYearsFromDob(dob: Date): number {
+    const now = new Date();
+    return now.getFullYear() - dob.getFullYear();
+  }
+
+  private async backfillLegacyAgeVerification(
+    user: Pick<User, "id" | "isAgeVerified" | "ageVerifiedAt" | "passwordHash" | "emailVerified"> & {
+      profile: { dateOfBirth: Date } | null;
+    }
+  ): Promise<boolean> {
+    if (!user.profile) return false;
+    if (user.isAgeVerified || user.ageVerifiedAt) return false;
+    if (!user.passwordHash || !user.emailVerified) return false;
+    if (this.ageYearsFromDob(user.profile.dateOfBirth) < 18) return false;
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { isAgeVerified: true, ageVerifiedAt: new Date() }
+    });
+    return true;
+  }
+
   private mediaUrls(media: UserMedia[]): { photoUrl?: string; galleryPhotos: string[] } {
     const galleryPhotos = media.map((m) => m.url);
     const primary = media.find((m) => m.isPrimary);
@@ -78,6 +118,11 @@ export class UserService {
       throw new AppError("NOT_FOUND", "User profile not found.", 404);
     }
 
+    const backfilled = await this.backfillLegacyAgeVerification(user);
+    if (backfilled) {
+      user.isAgeVerified = true;
+    }
+
     const [matchCount, likeCount, chatCount, sub, approvedVerification] = await Promise.all([
       prisma.match.count({
         where: { isActive: true, OR: [{ userAId: userId }, { userBId: userId }] }
@@ -108,7 +153,10 @@ export class UserService {
       bioLength: bio.length,
       interestsCount: interests.length,
       galleryCount: galleryPhotos.length,
-      hasLocation: !!(user.profile.city && user.profile.country),
+      hasLocation:
+        !!(user.profile.city && user.profile.country) &&
+        user.profile.city !== "Unknown" &&
+        user.profile.country !== "Unknown",
       lookingForCount: user.profile.lookingFor.length,
       isVerified
     });
@@ -138,7 +186,9 @@ export class UserService {
         likes: likeCount,
         chats: chatCount
       },
-      profileCompletion
+      profileCompletion,
+      isAgeVerified: user.isAgeVerified,
+      needsOnboarding: !user.isAgeVerified
     };
   }
 

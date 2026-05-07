@@ -20,7 +20,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const result = await authService.verifyAge(auth.userId, body.age);
+    const dob =
+      typeof body?.dateOfBirth === "string" && body.dateOfBirth.length > 0
+        ? body.dateOfBirth
+        : undefined;
+    const result = await authService.verifyAge(auth.userId, body.age, dob);
     return ok(result, requestId);
   });
 }
