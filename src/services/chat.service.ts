@@ -3,6 +3,7 @@ import { moderateTextProduction } from "@/lib/ai/openai-moderate";
 import { prisma } from "@/lib/db/prisma";
 import { shouldBlurMediaMessage } from "@/lib/safety/media-scan";
 import { getSocketIo } from "@/lib/socket/io-singleton";
+import { desirabilityService } from "@/services/desirability.service";
 import { matchingService } from "@/services/matching.service";
 import { notificationService } from "@/services/notification.service";
 import { AppError } from "@/utils/app-error";
@@ -75,6 +76,10 @@ export class ChatService {
       isMediaBlurred = scan.blur;
     }
 
+    const priorMessageCount = await prisma.message.count({
+      where: { chatId: input.chatId }
+    });
+
     const message = await prisma.message.create({
       data: {
         chatId: input.chatId,
@@ -86,6 +91,20 @@ export class ChatService {
         moderationFlag: false
       }
     });
+
+    await prisma.chatParticipant.updateMany({
+      where: { chatId: input.chatId },
+      data: { ghostingPenaltyMessageId: null }
+    });
+
+    if (priorMessageCount === 0) {
+      const parts = await prisma.chatParticipant.findMany({
+        where: { chatId: input.chatId },
+        select: { userId: true }
+      });
+      const ids = parts.map((p) => p.userId);
+      void desirabilityService.rewardFirstConversationMessage(ids).catch(() => undefined);
+    }
 
     this.emitChat("chat:message", input.chatId, {
       id: message.id,
@@ -166,6 +185,129 @@ export class ChatService {
     this.emitChat("chat:seen", chatId, { chatId, userId, count: result.count });
 
     return result;
+  }
+
+  async listMyChatsForMobile(userId: string, includeArchived = false) {
+    const rows = await prisma.chatParticipant.findMany({
+      where: {
+        userId,
+        ...(includeArchived ? {} : { isArchived: false })
+      },
+      include: {
+        chat: {
+          include: {
+            match: true,
+            messages: { orderBy: { createdAt: "desc" }, take: 1 }
+          }
+        }
+      }
+    });
+
+    if (rows.length === 0) return [];
+
+    const chatIds = rows.map((r) => r.chatId);
+    const unreadRows = await prisma.message.groupBy({
+      by: ["chatId"],
+      where: {
+        chatId: { in: chatIds },
+        senderUserId: { not: userId },
+        isSeen: false
+      },
+      _count: { _all: true }
+    });
+    const unreadMap = new Map(unreadRows.map((u) => [u.chatId, u._count._all]));
+
+    const otherIds = rows.map((row) => {
+      const m = row.chat.match;
+      return m.userAId === userId ? m.userBId : m.userAId;
+    });
+    const profiles = await prisma.userProfile.findMany({
+      where: { userId: { in: otherIds } },
+      include: {
+        user: {
+          select: {
+            lastSeenAt: true,
+            media: { orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }], take: 1 }
+          }
+        }
+      }
+    });
+    const pmap = new Map(profiles.map((p) => [p.userId, p]));
+
+    const onlineMs = 5 * 60 * 1000;
+    const now = Date.now();
+
+    return rows.map((row, i) => {
+      const partnerId = otherIds[i]!;
+      const prof = pmap.get(partnerId);
+      const last = row.chat.messages[0];
+      const lastSeen = prof?.user.lastSeenAt;
+      return {
+        chatId: row.chatId,
+        partnerId,
+        partnerName: prof?.fullName ?? "Member",
+        partnerPhoto: prof?.user.media[0]?.url,
+        lastMessage:
+          (last?.body && last.body.trim())
+            ? last.body
+            : last
+              ? `[${String(last.type).toLowerCase().replace("_", " ")}]`
+              : undefined,
+        lastMessageAt: last?.createdAt.toISOString(),
+        unreadCount: unreadMap.get(row.chatId) ?? 0,
+        isOnline: lastSeen != null && now - lastSeen.getTime() < onlineMs
+      };
+    });
+  }
+
+  async getThreadForMobile(chatId: string, userId: string) {
+    const messages = await this.getMessages(chatId, userId);
+
+    const membership = await prisma.chatParticipant.findUnique({
+      where: { chatId_userId: { chatId, userId } },
+      include: { chat: { include: { match: true } } }
+    });
+    if (!membership?.chat?.match) {
+      throw new AppError("FORBIDDEN", "You are not part of this chat.", 403);
+    }
+    const m = membership.chat.match;
+    const partnerId = m.userAId === userId ? m.userBId : m.userAId;
+
+    const prof = await prisma.userProfile.findUnique({
+      where: { userId: partnerId },
+      include: {
+        user: {
+          select: {
+            lastSeenAt: true,
+            media: { orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }], take: 1 }
+          }
+        }
+      }
+    });
+    const lastSeen = prof?.user.lastSeenAt;
+    const onlineMs = 5 * 60 * 1000;
+    const now = Date.now();
+
+    const mappedMessages = messages.map((msg) => ({
+      messageId: msg.id,
+      senderId: msg.senderUserId,
+      content: msg.body ?? "",
+      sentAt: msg.createdAt.toISOString(),
+      isMe: msg.senderUserId === userId,
+      type: msg.type
+    }));
+
+    return {
+      items: messages,
+      messages: mappedMessages,
+      chat: {
+        chatId,
+        partnerId,
+        partnerName: prof?.fullName ?? "Member",
+        partnerPhoto: prof?.user.media[0]?.url,
+        isOnline: lastSeen != null && now - lastSeen.getTime() < onlineMs
+      }
+    };
   }
 
   private emitChat(event: string, chatId: string, payload: unknown) {

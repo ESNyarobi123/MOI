@@ -10,6 +10,7 @@ export async function GET(request: NextRequest) {
     if (auth instanceof Response) return auth;
     const requestId = request.headers.get("x-request-id") ?? undefined;
     const items = await matchingService.listMatches(auth.userId);
-    return ok({ items }, requestId);
+    const matches = await matchingService.listMatchesForMobile(auth.userId);
+    return ok({ items, matches }, requestId);
   });
 }

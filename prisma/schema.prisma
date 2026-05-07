@@ -76,6 +76,7 @@ model User {
   accountRiskNote     String?
   fakeAccountFlag     Boolean              @default(false)
   lastSeenAt          DateTime?
+  desirabilityScore   Float                @default(50)
   createdAt           DateTime             @default(now())
   updatedAt           DateTime             @updatedAt
   profile             UserProfile?
@@ -206,14 +207,24 @@ model VerificationRecord {
 }
 
 model Swipe {
-  id            String      @id @default(cuid())
-  actorUserId   String
-  targetUserId  String
-  action        SwipeAction
-  createdAt     DateTime    @default(now())
-  actorUser     User        @relation("swipes_made", fields: [actorUserId], references: [id], onDelete: Cascade)
-  targetUser    User        @relation("swipes_received", fields: [targetUserId], references: [id], onDelete: Cascade)
+  id                     String                  @id @default(cuid())
+  actorUserId            String
+  targetUserId           String
+  action                 SwipeAction
+  createdAt              DateTime                @default(now())
+  actorUser              User                    @relation("swipes_made", fields: [actorUserId], references: [id], onDelete: Cascade)
+  targetUser             User                    @relation("swipes_received", fields: [targetUserId], references: [id], onDelete: Cascade)
+  desirabilityAdjustment DesirabilityAdjustment?
   @@unique([actorUserId, targetUserId])
+}
+
+/** Ledger row for desirability delta from a swipe — reversed on undo. */
+model DesirabilityAdjustment {
+  swipeId      String   @id
+  targetUserId String
+  delta        Float
+  createdAt    DateTime @default(now())
+  swipe        Swipe    @relation(fields: [swipeId], references: [id], onDelete: Cascade)
 }
 
 model Match {
@@ -239,13 +250,15 @@ model Chat {
 }
 
 model ChatParticipant {
-  chatId          String
-  userId          String
-  lastSeenAt      DateTime?
-  isMuted         Boolean           @default(false)
-  isArchived      Boolean           @default(false)
-  chat            Chat              @relation(fields: [chatId], references: [id], onDelete: Cascade)
-  user            User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  chatId                   String
+  userId                   String
+  lastSeenAt               DateTime?
+  isMuted                  Boolean           @default(false)
+  isArchived               Boolean           @default(false)
+  /** Last inbound message id we already applied ghosting penalty for (per user per chat). */
+  ghostingPenaltyMessageId String?
+  chat                     Chat              @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  user                     User              @relation(fields: [userId], references: [id], onDelete: Cascade)
   @@id([chatId, userId])
 }
 

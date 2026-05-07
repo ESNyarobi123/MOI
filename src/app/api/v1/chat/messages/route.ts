@@ -17,7 +17,7 @@ export async function GET(request: NextRequest) {
       return fail({ code: "BAD_REQUEST", message: ERROR_MESSAGES.BAD_REQUEST }, requestId);
     }
 
-    const items = await chatService.getMessages(chatId, auth.userId);
-    return ok({ items }, requestId);
+    const thread = await chatService.getThreadForMobile(chatId, auth.userId);
+    return ok(thread, requestId);
   });
 }

@@ -3,6 +3,7 @@ import { Gender, LookingFor } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
 import { matchingVectorService } from "@/services/matching-vector.service";
 import { subscriptionUserService } from "@/services/subscription-user.service";
+import { desirabilityTier } from "@/services/desirability.service";
 import { AppError } from "@/utils/app-error";
 
 export type UserProfile = {
@@ -34,6 +35,10 @@ export type UserProfile = {
   isAgeVerified?: boolean;
   /** True until age gate completed (OAuth users start here) */
   needsOnboarding?: boolean;
+  /** 0–100 internal ranking for Discover ordering (Elo-style; not shown as raw to others) */
+  desirabilityScore?: number;
+  /** Bucket label for optional UI */
+  desirabilityTier?: "rising" | "solid" | "top";
 };
 
 export class UserService {
@@ -188,7 +193,9 @@ export class UserService {
       },
       profileCompletion,
       isAgeVerified: user.isAgeVerified,
-      needsOnboarding: !user.isAgeVerified
+      needsOnboarding: !user.isAgeVerified,
+      desirabilityScore: Math.round((user.desirabilityScore ?? 50) * 10) / 10,
+      desirabilityTier: desirabilityTier(user.desirabilityScore ?? 50)
     };
   }
 
@@ -285,7 +292,7 @@ export class UserService {
       throw new AppError("NOT_FOUND", "User profile not found.", 404);
     }
 
-    const updated = await prisma.userProfile.update({
+    await prisma.userProfile.update({
       where: { userId },
       data: {
         fullName: input.fullName ?? undefined,
@@ -299,7 +306,7 @@ export class UserService {
       }
     });
     matchingVectorService.scheduleSync(userId);
-    return updated;
+    return this.getMe(userId);
   }
 
   async updateInterests(userId: string, interests: string[]) {

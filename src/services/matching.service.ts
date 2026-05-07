@@ -3,6 +3,7 @@ import { SwipeAction } from "@prisma/client";
 import { applyPineconeBoost } from "@/lib/ai/pinecone-boost";
 import { haversineKm } from "@/lib/location/geo";
 import { prisma } from "@/lib/db/prisma";
+import { desirabilityService } from "@/services/desirability.service";
 import { notificationService } from "@/services/notification.service";
 import { userService } from "@/services/user.service";
 import { AppError } from "@/utils/app-error";
@@ -105,6 +106,25 @@ export class MatchingService {
       take: 200
     });
 
+    const candIds = candidates.map((c) => c.id);
+    const recvAgg =
+      candIds.length > 0
+        ? await prisma.swipe.groupBy({
+            by: ["targetUserId", "action"],
+            where: { targetUserId: { in: candIds } },
+            _count: { _all: true }
+          })
+        : [];
+    const recvMap = new Map<string, { likes: number; passes: number }>();
+    for (const row of recvAgg) {
+      const cur = recvMap.get(row.targetUserId) ?? { likes: 0, passes: 0 };
+      if (row.action === "LIKE" || row.action === "SUPERLIKE") cur.likes += row._count._all;
+      else if (row.action === "PASS") cur.passes += row._count._all;
+      recvMap.set(row.targetUserId, cur);
+    }
+
+    const Sa = actor.desirabilityScore ?? 50;
+
     const countrywide = Boolean(options.countrywide);
     const maxKm = countrywide
       ? undefined
@@ -184,6 +204,20 @@ export class MatchingService {
         }
       }
 
+      const Sb = u.desirabilityScore ?? 50;
+      const recv = recvMap.get(u.id) ?? { likes: 0, passes: 0 };
+      const denom = recv.likes + recv.passes + 8;
+      const receiveRatio = recv.likes / denom;
+      compatibilityScore += (receiveRatio - 0.32) * 0.07;
+
+      const tierDiff = Math.abs(Sa - Sb) / 100;
+      compatibilityScore += (1 - tierDiff) * 0.055;
+
+      if (Sb > Sa + 12 && !likedMeIds.has(u.id)) {
+        const excess = Math.min(1, (Sb - Sa - 12) / 28);
+        compatibilityScore *= 1 - 0.1 * excess;
+      }
+
       compatibilityScore = Math.min(1, Math.max(0, compatibilityScore));
 
       const photoUrl = u.media[0]?.url;
@@ -245,7 +279,7 @@ export class MatchingService {
       superlike: "SUPERLIKE"
     };
 
-    await prisma.swipe.upsert({
+    const swipeRow = await prisma.swipe.upsert({
       where: {
         actorUserId_targetUserId: {
           actorUserId: input.actorUserId,
@@ -294,6 +328,14 @@ export class MatchingService {
       }
     }
 
+    await desirabilityService.applySwipeDesirability(
+      swipeRow.id,
+      input.targetUserId,
+      input.actorUserId,
+      input.action
+    );
+    await desirabilityService.penalizeMassSwiper(input.actorUserId);
+
     return {
       actorUserId: input.actorUserId,
       targetUserId: input.targetUserId,
@@ -315,6 +357,8 @@ export class MatchingService {
     if (Date.now() - last.createdAt.getTime() > windowMs) {
       throw new AppError("BAD_REQUEST", "Undo window expired.", 400);
     }
+
+    await desirabilityService.reverseSwipeDesirability(last.id);
 
     const targetId = last.targetUserId;
     await prisma.swipe.delete({ where: { id: last.id } });
@@ -351,6 +395,47 @@ export class MatchingService {
     }
 
     return { undone: true, matchRemoved };
+  }
+
+  async listMatchesForMobile(userId: string) {
+    const rows = await prisma.match.findMany({
+      where: {
+        isActive: true,
+        OR: [{ userAId: userId }, { userBId: userId }]
+      },
+      include: {
+        chat: { include: { _count: { select: { messages: true } } } }
+      },
+      orderBy: { matchedAt: "desc" }
+    });
+    const otherIds = rows.map((m) => (m.userAId === userId ? m.userBId : m.userAId));
+    const profiles = await prisma.userProfile.findMany({
+      where: { userId: { in: otherIds } },
+      include: {
+        user: {
+          select: {
+            lastSeenAt: true,
+            media: { orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }], take: 1 }
+          }
+        }
+      }
+    });
+    const pmap = new Map(profiles.map((p) => [p.userId, p]));
+
+    return rows.map((m) => {
+      const oid = m.userAId === userId ? m.userBId : m.userAId;
+      const prof = pmap.get(oid);
+      const photoUrl = prof?.user.media[0]?.url ?? undefined;
+      const msgCount = m.chat?._count?.messages ?? 0;
+      return {
+        matchId: m.id,
+        userId: oid,
+        name: prof?.fullName ?? "Member",
+        photoUrl,
+        matchedAt: m.matchedAt.toISOString(),
+        isNew: msgCount === 0
+      };
+    });
   }
 
   async listMatches(userId: string) {

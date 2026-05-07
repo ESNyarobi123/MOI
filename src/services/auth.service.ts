@@ -213,7 +213,7 @@ export class AuthService {
       data: {
         userId,
         url,
-        mediaType: "image",
+        mediaType: "photo",
         isPrimary: true
       }
     });

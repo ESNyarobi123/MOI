@@ -12,7 +12,8 @@ export async function GET(request: NextRequest) {
 
     const includeArchived =
       request.nextUrl.searchParams.get("includeArchived") === "true";
-    const chats = await chatService.listMyChats(auth.userId, includeArchived);
-    return ok({ items: chats }, requestId);
+    const items = await chatService.listMyChats(auth.userId, includeArchived);
+    const chats = await chatService.listMyChatsForMobile(auth.userId, includeArchived);
+    return ok({ items, chats }, requestId);
   });
 }

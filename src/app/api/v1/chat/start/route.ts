@@ -12,11 +12,12 @@ export async function POST(request: NextRequest) {
     const requestId = request.headers.get("x-request-id") ?? undefined;
     const body = await request.json();
 
-    if (!body?.otherUserId) {
+    const otherUserId = body?.otherUserId ?? body?.targetUserId;
+    if (!otherUserId || typeof otherUserId !== "string") {
       return fail({ code: "BAD_REQUEST", message: ERROR_MESSAGES.BAD_REQUEST }, requestId);
     }
 
-    const chat = await chatService.startOrGetDirectChat(auth.userId, body.otherUserId);
+    const chat = await chatService.startOrGetDirectChat(auth.userId, otherUserId);
     return ok(chat, requestId, 201);
   });
 }
