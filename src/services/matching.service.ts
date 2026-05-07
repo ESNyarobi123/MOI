@@ -47,6 +47,8 @@ export type FeedOptions = {
   maxAge?: number;
   /** When set and not ALL, only return profiles with this Gender enum value. */
   preferGender?: string;
+  /** How many profiles to return after ranking (10–50). Default 50. */
+  limit?: number;
 };
 
 function ageFromDob(dob: Date) {
@@ -303,7 +305,8 @@ export class MatchingService {
     }
 
     scored.sort((a, b) => b.compatibilityScore - a.compatibilityScore);
-    return scored.slice(0, 50);
+    const lim = Math.min(50, Math.max(10, Math.round(options.limit ?? 50)));
+    return scored.slice(0, lim);
   }
 
   async swipe(input: SwipeInput) {

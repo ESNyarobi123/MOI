@@ -28,13 +28,15 @@ export async function GET(request: NextRequest) {
       ["MALE", "FEMALE", "NON_BINARY", "OTHER", "ALL"].includes(preferGenderRaw)
         ? preferGenderRaw
         : undefined;
+    const limit = clampInt(searchParams.get("limit"), 10, 50);
 
     const feed = await matchingService.getFeed(auth.userId, {
       countrywide,
       radiusKm: radiusKm ?? undefined,
       minAge: minAge ?? undefined,
       maxAge: maxAge ?? undefined,
-      preferGender: preferGender ?? undefined
+      preferGender: preferGender ?? undefined,
+      limit: limit ?? undefined
     });
 
     const profiles = feed.map((c) => ({
