@@ -251,6 +251,7 @@ export class AuthService {
       where: { googleId: profile.sub }
     });
     if (userByGoogleId?.email) {
+      await this.attachGoogleProfilePhoto(userByGoogleId.id, profile.picture);
       return this.issueTokenPair(userByGoogleId.id, userByGoogleId.email);
     }
 
@@ -304,7 +305,10 @@ export class AuthService {
     const email = normalizeEmail(profile.email);
 
     const byGoogleId = await prisma.user.findUnique({ where: { googleId: profile.sub } });
-    if (byGoogleId) return this.issueTokenPair(byGoogleId.id, byGoogleId.email!);
+    if (byGoogleId) {
+      await this.attachGoogleProfilePhoto(byGoogleId.id, profile.picture);
+      return this.issueTokenPair(byGoogleId.id, byGoogleId.email!);
+    }
 
     const byEmail = await prisma.user.findUnique({ where: { email } });
     if (byEmail) {

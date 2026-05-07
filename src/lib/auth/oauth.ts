@@ -98,6 +98,7 @@ export async function exchangeGoogleCodeForTokens(input: {
 }
 
 export async function verifyGoogleIdToken(idToken: string): Promise<GoogleUserProfile> {
+  const payload = parseJwtPayload(idToken);
   const response = await fetch(
     `https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(idToken)}`
   );
@@ -105,10 +106,18 @@ export async function verifyGoogleIdToken(idToken: string): Promise<GoogleUserPr
     throw new AppError("UNAUTHORIZED", "Invalid Google ID token.", 401);
   }
   const data = (await response.json()) as GoogleUserProfile & { aud?: string };
-  if (!data.sub || !data.email) {
+  const merged: GoogleUserProfile = {
+    ...payload,
+    ...data,
+    picture: data.picture ?? payload?.picture,
+    name: data.name ?? payload?.name,
+    given_name: data.given_name ?? payload?.given_name,
+    family_name: data.family_name ?? payload?.family_name
+  };
+  if (!merged.sub || !merged.email) {
     throw new AppError("UNAUTHORIZED", "Google ID token missing required fields.", 401);
   }
-  return data;
+  return merged;
 }
 
 export async function fetchGoogleUserProfileByAccessToken(accessToken: string) {
@@ -129,5 +138,19 @@ export async function fetchGoogleUserProfileByAccessToken(accessToken: string) {
     throw new AppError("UNAUTHORIZED", "Google profile missing required fields.", 401);
   }
   return data;
+}
+
+function parseJwtPayload(idToken: string): Partial<GoogleUserProfile> {
+  const parts = idToken.split(".");
+  if (parts.length < 2) return {};
+  try {
+    const base64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    const padded = base64.padEnd(Math.ceil(base64.length / 4) * 4, "=");
+    const json = Buffer.from(padded, "base64").toString("utf-8");
+    const payload = JSON.parse(json) as Partial<GoogleUserProfile>;
+    return payload ?? {};
+  } catch {
+    return {};
+  }
 }
 
