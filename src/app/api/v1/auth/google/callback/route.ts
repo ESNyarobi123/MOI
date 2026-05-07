@@ -44,7 +44,9 @@ export async function GET(request: NextRequest) {
       tokenType: result.tokenType,
       provider: "google"
     });
-  } catch {
-    return redirectToApp({ error: "oauth_failed" });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Unknown error";
+    console.error("[GoogleCallback] OAuth failed:", err);
+    return redirectToApp({ error: message.slice(0, 200) });
   }
 }
