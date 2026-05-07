@@ -44,7 +44,11 @@ export async function GET(request: NextRequest) {
       tokenType: result.tokenType,
       provider: "google"
     });
-  } catch {
-    return redirectToApp({ error: "oauth_failed" });
+  } catch (err) {
+    const detail =
+      process.env.NODE_ENV !== "production" && err instanceof Error
+        ? err.message
+        : "oauth_failed";
+    return redirectToApp({ error: detail });
   }
 }
