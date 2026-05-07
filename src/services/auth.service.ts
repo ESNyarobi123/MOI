@@ -2,7 +2,8 @@ import { Gender } from "@prisma/client";
 import { signAccessToken } from "@/lib/auth/jwt";
 import {
   exchangeGoogleCodeForTokens,
-  fetchGoogleUserProfileByAccessToken
+  fetchGoogleUserProfileByAccessToken,
+  verifyGoogleIdToken
 } from "@/lib/auth/oauth";
 import { generateNumericOtp, hashOtpCode } from "@/lib/auth/otp-code";
 import { hashPassword, verifyPassword } from "@/lib/auth/password";
@@ -275,6 +276,48 @@ export class AuthService {
       }
     });
 
+    return this.issueTokenPair(created.id, created.email!);
+  }
+
+  async loginWithGoogleIdToken(idToken: string) {
+    const profile = await verifyGoogleIdToken(idToken);
+    const email = normalizeEmail(profile.email);
+
+    const byGoogleId = await prisma.user.findUnique({ where: { googleId: profile.sub } });
+    if (byGoogleId) return this.issueTokenPair(byGoogleId.id, byGoogleId.email!);
+
+    const byEmail = await prisma.user.findUnique({ where: { email } });
+    if (byEmail) {
+      const updated = await prisma.user.update({
+        where: { id: byEmail.id },
+        data: { googleId: byEmail.googleId ?? profile.sub, emailVerified: true }
+      });
+      return this.issueTokenPair(updated.id, updated.email!);
+    }
+
+    const fullName =
+      profile.name?.trim() ||
+      [profile.given_name, profile.family_name].filter(Boolean).join(" ").trim() ||
+      "MoiDate User";
+
+    const created = await prisma.user.create({
+      data: {
+        email,
+        googleId: profile.sub,
+        emailVerified: true,
+        isAgeVerified: false,
+        profile: {
+          create: {
+            fullName,
+            dateOfBirth: new Date("1998-01-01T00:00:00.000Z"),
+            gender: "OTHER",
+            city: "Unknown",
+            country: "Unknown",
+            lookingFor: ["DATING"]
+          }
+        }
+      }
+    });
     return this.issueTokenPair(created.id, created.email!);
   }
 

@@ -97,6 +97,20 @@ export async function exchangeGoogleCodeForTokens(input: {
   };
 }
 
+export async function verifyGoogleIdToken(idToken: string): Promise<GoogleUserProfile> {
+  const response = await fetch(
+    `https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(idToken)}`
+  );
+  if (!response.ok) {
+    throw new AppError("UNAUTHORIZED", "Invalid Google ID token.", 401);
+  }
+  const data = (await response.json()) as GoogleUserProfile & { aud?: string };
+  if (!data.sub || !data.email) {
+    throw new AppError("UNAUTHORIZED", "Google ID token missing required fields.", 401);
+  }
+  return data;
+}
+
 export async function fetchGoogleUserProfileByAccessToken(accessToken: string) {
   const response = await fetch(
     "https://www.googleapis.com/oauth2/v3/userinfo",
