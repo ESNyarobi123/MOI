@@ -1,30 +1,76 @@
+import type { UserMedia } from "@prisma/client";
 import { Gender, LookingFor } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
 import { matchingVectorService } from "@/services/matching-vector.service";
+import { subscriptionUserService } from "@/services/subscription-user.service";
 import { AppError } from "@/utils/app-error";
 
 export type UserProfile = {
   userId: string;
   fullName: string;
+  /** Display name for mobile / web clients */
+  name?: string;
+  email?: string;
   age: number;
   gender: string;
   city: string;
   country: string;
+  /** e.g. "Nairobi, Kenya" */
+  locationLabel?: string;
   interests: string[];
   lookingFor: string[];
   bio: string;
   showProfile: boolean;
   hideExactLocation: boolean;
   distanceKm: number;
+  photoUrl?: string | null;
+  galleryPhotos?: string[];
+  isVerified?: boolean;
+  subscriptionPlan?: string;
+  stats?: { matches: number; likes: number; chats: number };
+  /** 0–100, for “profile strength” UI */
+  profileCompletion?: number;
 };
 
 export class UserService {
+  private mediaUrls(media: UserMedia[]): { photoUrl?: string; galleryPhotos: string[] } {
+    const galleryPhotos = media.map((m) => m.url);
+    const primary = media.find((m) => m.isPrimary);
+    const photoUrl = primary?.url ?? media[0]?.url;
+    return { photoUrl, galleryPhotos };
+  }
+
+  private computeProfileCompletion(input: {
+    hasPhoto: boolean;
+    bioLength: number;
+    interestsCount: number;
+    galleryCount: number;
+    hasLocation: boolean;
+    lookingForCount: number;
+    isVerified: boolean;
+  }): number {
+    let score = 0;
+    if (input.hasPhoto) score += 25;
+    if (input.bioLength >= 20) score += 20;
+    else if (input.bioLength >= 8) score += 10;
+    if (input.interestsCount >= 3) score += 15;
+    else if (input.interestsCount >= 1) score += 8;
+    if (input.galleryCount >= 3) score += 15;
+    else if (input.galleryCount >= 2) score += 10;
+    else if (input.galleryCount >= 1) score += 5;
+    if (input.hasLocation) score += 10;
+    if (input.lookingForCount > 0) score += 10;
+    if (input.isVerified) score += 5;
+    return Math.min(100, score);
+  }
+
   async getMe(userId: string): Promise<UserProfile> {
     const user = await prisma.user.findUnique({
       where: { id: userId },
       include: {
         profile: true,
-        interests: { include: { interest: true } }
+        interests: { include: { interest: true } },
+        media: { orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }] }
       }
     });
 
@@ -32,22 +78,67 @@ export class UserService {
       throw new AppError("NOT_FOUND", "User profile not found.", 404);
     }
 
+    const [matchCount, likeCount, chatCount, sub, approvedVerification] = await Promise.all([
+      prisma.match.count({
+        where: { isActive: true, OR: [{ userAId: userId }, { userBId: userId }] }
+      }),
+      prisma.swipe.count({
+        where: {
+          targetUserId: userId,
+          action: { in: ["LIKE", "SUPERLIKE"] }
+        }
+      }),
+      prisma.chatParticipant.count({ where: { userId } }),
+      subscriptionUserService.getMyActiveSubscription(userId),
+      prisma.verificationRecord.findFirst({
+        where: { userId, status: "APPROVED" }
+      })
+    ]);
+
     const now = new Date();
     const age = now.getFullYear() - user.profile.dateOfBirth.getFullYear();
+    const bio = user.profile.bio ?? "";
+    const interests = user.interests.map((item) => item.interest.slug);
+    const { photoUrl, galleryPhotos } = this.mediaUrls(user.media);
+    const isVerified = !!approvedVerification || user.emailVerified;
+    const locationLabel = [user.profile.city, user.profile.country].filter(Boolean).join(", ");
+
+    const profileCompletion = this.computeProfileCompletion({
+      hasPhoto: !!photoUrl,
+      bioLength: bio.length,
+      interestsCount: interests.length,
+      galleryCount: galleryPhotos.length,
+      hasLocation: !!(user.profile.city && user.profile.country),
+      lookingForCount: user.profile.lookingFor.length,
+      isVerified
+    });
 
     return {
       userId,
       fullName: user.profile.fullName,
+      name: user.profile.fullName,
+      email: user.email ?? undefined,
       age,
       gender: user.profile.gender,
       city: user.profile.city,
       country: user.profile.country,
-      interests: user.interests.map((item) => item.interest.slug),
+      locationLabel,
+      interests,
       lookingFor: user.profile.lookingFor,
-      bio: user.profile.bio ?? "",
+      bio,
       showProfile: user.profile.showProfile,
       hideExactLocation: user.profile.hideExactLocation,
-      distanceKm: user.profile.distanceKm
+      distanceKm: user.profile.distanceKm,
+      photoUrl,
+      galleryPhotos,
+      isVerified,
+      subscriptionPlan: sub?.plan.code ?? "FREE",
+      stats: {
+        matches: matchCount,
+        likes: likeCount,
+        chats: chatCount
+      },
+      profileCompletion
     };
   }
 
@@ -89,7 +180,8 @@ export class UserService {
       where: { id: targetUserId },
       include: {
         profile: true,
-        interests: { include: { interest: true } }
+        interests: { include: { interest: true } },
+        media: { orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }] }
       }
     });
 
@@ -97,22 +189,33 @@ export class UserService {
       throw new AppError("NOT_FOUND", "User not found.", 404);
     }
 
+    const approvedVerification = await prisma.verificationRecord.findFirst({
+      where: { userId: targetUserId, status: "APPROVED" }
+    });
+
     const now = new Date();
     const age = now.getFullYear() - user.profile.dateOfBirth.getFullYear();
+    const { photoUrl, galleryPhotos } = this.mediaUrls(user.media);
+    const locationLabel = [user.profile.city, user.profile.country].filter(Boolean).join(", ");
 
     return {
       userId: targetUserId,
       fullName: user.profile.fullName,
+      name: user.profile.fullName,
       age,
       gender: user.profile.gender,
       city: user.profile.city,
       country: user.profile.country,
+      locationLabel,
       interests: user.interests.map((item) => item.interest.slug),
       lookingFor: user.profile.lookingFor,
       bio: user.profile.bio ?? "",
       showProfile: user.profile.showProfile,
       hideExactLocation: user.profile.hideExactLocation,
-      distanceKm: user.profile.distanceKm
+      distanceKm: user.profile.distanceKm,
+      photoUrl,
+      galleryPhotos,
+      isVerified: !!approvedVerification || user.emailVerified
     };
   }
 
