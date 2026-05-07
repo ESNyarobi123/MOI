@@ -1,0 +1,144 @@
+:root {
+  --app-bg: #0f1419;
+  --app-surface: #1a2332;
+  --app-border: #2d3a4f;
+  --app-text: #e7ecf3;
+  --app-muted: #8b9cb3;
+  --app-accent: #7c9cff;
+  --app-danger: #e85d6c;
+  --app-ok: #3dcca8;
+}
+
+.member-app {
+  min-height: 100vh;
+  background: var(--app-bg);
+  color: var(--app-text);
+}
+
+.member-shell {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  min-height: 100vh;
+}
+
+.member-nav {
+  background: var(--app-surface);
+  border-right: 1px solid var(--app-border);
+  padding: 20px 0;
+}
+
+.member-nav a {
+  display: block;
+  padding: 10px 20px;
+  color: var(--app-muted);
+  text-decoration: none;
+  font-size: 14px;
+}
+
+.member-nav a:hover {
+  color: var(--app-text);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.member-nav a.active {
+  color: var(--app-accent);
+  border-left: 3px solid var(--app-accent);
+  padding-left: 17px;
+}
+
+.member-main {
+  padding: 28px 32px;
+  overflow: auto;
+}
+
+.member-title {
+  font-size: 1.35rem;
+  font-weight: 600;
+  margin: 0 0 8px;
+}
+
+.member-sub {
+  color: var(--app-muted);
+  font-size: 14px;
+  margin: 0 0 24px;
+}
+
+.member-btn {
+  display: inline-block;
+  padding: 8px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--app-border);
+  background: transparent;
+  color: var(--app-text);
+  font-size: 13px;
+  cursor: pointer;
+  margin-right: 8px;
+  margin-bottom: 8px;
+}
+
+.member-btn:hover {
+  border-color: var(--app-accent);
+  color: var(--app-accent);
+}
+
+.member-btn.primary {
+  background: var(--app-accent);
+  color: #0f1419;
+  border-color: var(--app-accent);
+}
+
+.member-btn.primary:hover {
+  filter: brightness(1.05);
+  color: #0f1419;
+}
+
+.member-input,
+.member-textarea {
+  width: 100%;
+  max-width: 420px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--app-border);
+  background: var(--app-bg);
+  color: var(--app-text);
+  font-size: 14px;
+  margin-bottom: 12px;
+  box-sizing: border-box;
+}
+
+.member-error {
+  color: var(--app-danger);
+  font-size: 14px;
+  margin: 8px 0;
+}
+
+.member-ok {
+  color: var(--app-ok);
+  font-size: 14px;
+  margin: 8px 0;
+}
+
+.member-logout {
+  margin: 20px;
+  padding: 8px 12px;
+  font-size: 13px;
+  cursor: pointer;
+  border-radius: 8px;
+  border: 1px solid var(--app-border);
+  background: transparent;
+  color: var(--app-muted);
+}
+
+.member-card {
+  background: var(--app-surface);
+  border: 1px solid var(--app-border);
+  border-radius: 12px;
+  padding: 20px;
+  max-width: 420px;
+  margin-bottom: 16px;
+}
+
+.member-muted {
+  color: var(--app-muted);
+  font-size: 13px;
+}
