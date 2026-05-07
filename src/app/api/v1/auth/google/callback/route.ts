@@ -21,7 +21,7 @@ export async function GET(request: NextRequest) {
   }
 
   function redirectToApp(params: Record<string, string>) {
-    const target = appCallback ?? "moidate://auth/callback";
+    const target = appCallback ?? "https://apis.moidate.online/api/v1/auth/mobile-done";
     const url = new URL(target);
     Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
     return NextResponse.redirect(url.toString(), { status: 302 });
