@@ -3,21 +3,30 @@ import { withErrorHandler } from "@/utils/handlers";
 import { ok } from "@/utils/response";
 import { getAllLegalDocs } from "@/lib/legal/content";
 
-function getBaseUrl(request: NextRequest) {
-  const envBase = process.env.PUBLIC_APP_URL?.trim();
+function getAppUrl(request: NextRequest) {
+  const envBase = process.env.APP_URL?.trim() || process.env.PUBLIC_APP_URL?.trim();
   if (envBase) return envBase.replace(/\/+$/, "");
-  const origin = request.nextUrl.origin;
-  return origin.replace(/\/+$/, "");
+  return request.nextUrl.origin.replace(/\/+$/, "");
+}
+
+function getApiBaseUrl(request: NextRequest) {
+  const envBase =
+    process.env.API_BASE_URL?.trim() ||
+    process.env.PUBLIC_API_BASE_URL?.trim() ||
+    process.env.PUBLIC_APP_URL?.trim();
+  if (envBase) return envBase.replace(/\/+$/, "");
+  return request.nextUrl.origin.replace(/\/+$/, "");
 }
 
 export async function GET(request: NextRequest) {
   return withErrorHandler(request, async () => {
     const requestId = request.headers.get("x-request-id") ?? undefined;
-    const base = getBaseUrl(request);
+    const appBase = getAppUrl(request);
+    const apiBase = getApiBaseUrl(request);
     const docs = getAllLegalDocs().map((doc) => ({
       ...doc,
-      webUrl: `${base}/legal/${doc.key}`,
-      apiUrl: `${base}/api/v1/legal/${doc.key}`
+      webUrl: `${appBase}/legal/${doc.key}`,
+      apiUrl: `${apiBase}/api/v1/legal/${doc.key}`
     }));
     return ok({ docs }, requestId);
   });

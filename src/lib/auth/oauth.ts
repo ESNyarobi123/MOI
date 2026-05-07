@@ -26,12 +26,17 @@ export function getGoogleOAuthConfig() {
   const clientId = requireEnv("GOOGLE_CLIENT_ID");
   const clientSecret = requireEnv("GOOGLE_CLIENT_SECRET");
   const appUrl = process.env.APP_URL?.trim() || "http://localhost:3000";
-  const base = process.env.PUBLIC_APP_URL?.trim() || appUrl;
-  const callbackUrl = `${base.replace(/\/+$/, "")}/api/v1/auth/google/callback`;
+  const apiBaseUrl =
+    process.env.API_BASE_URL?.trim() ||
+    process.env.PUBLIC_API_BASE_URL?.trim() ||
+    process.env.PUBLIC_APP_URL?.trim() ||
+    "http://localhost:3000";
+  const callbackUrl = `${apiBaseUrl.replace(/\/+$/, "")}/api/v1/auth/google/callback`;
   return {
     clientId,
     clientSecret,
     appUrl,
+    apiBaseUrl,
     callbackUrl
   };
 }

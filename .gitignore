@@ -13,3 +13,5 @@ out/
 # OS / IDE
 .DS_Store
 *.log
+client_secret_*.json
+googlauth.txt

@@ -1,4 +1,5 @@
 import type { NextRequest } from "next/server";
+import { getGoogleOAuthConfig } from "@/lib/auth/oauth";
 import { authService } from "@/services/auth.service";
 import { withErrorHandler } from "@/utils/handlers";
 import { fail, ok } from "@/utils/response";
@@ -17,7 +18,8 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const redirectUri = `${request.nextUrl.origin}/api/v1/auth/google/callback`;
+    const { callbackUrl } = getGoogleOAuthConfig();
+    const redirectUri = callbackUrl;
     const result = await authService.loginWithGoogle({
       code,
       redirectUri
