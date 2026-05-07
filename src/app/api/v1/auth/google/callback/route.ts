@@ -1,37 +1,48 @@
-import type { NextRequest } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 import { getGoogleOAuthConfig } from "@/lib/auth/oauth";
 import { authService } from "@/services/auth.service";
-import { withErrorHandler } from "@/utils/handlers";
-import { fail, ok } from "@/utils/response";
 
 export async function GET(request: NextRequest) {
-  return withErrorHandler(request, async () => {
-    const requestId = request.headers.get("x-request-id") ?? undefined;
-    const code = request.nextUrl.searchParams.get("code");
-    if (!code) {
-      return fail(
-        {
-          code: "BAD_REQUEST",
-          message: "Missing OAuth code."
-        },
-        requestId
-      );
+  const code = request.nextUrl.searchParams.get("code");
+  const state = request.nextUrl.searchParams.get("state");
+  const errorParam = request.nextUrl.searchParams.get("error");
+
+  // Decode appCallback from state  (state = base64(JSON{nonce,appCallback}))
+  let appCallback: string | null = null;
+  try {
+    if (state) {
+      const decoded = JSON.parse(Buffer.from(state, "base64url").toString("utf-8"));
+      appCallback = decoded?.appCallback ?? null;
     }
+  } catch {
+    // state was a plain UUID from older flow — no appCallback
+  }
 
+  function redirectToApp(params: Record<string, string>) {
+    const target = appCallback ?? "moidate://auth/callback";
+    const url = new URL(target);
+    Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
+    return NextResponse.redirect(url.toString(), { status: 302 });
+  }
+
+  if (errorParam) {
+    return redirectToApp({ error: errorParam });
+  }
+
+  if (!code) {
+    return redirectToApp({ error: "missing_code" });
+  }
+
+  try {
     const { callbackUrl } = getGoogleOAuthConfig();
-    const redirectUri = callbackUrl;
-    const result = await authService.loginWithGoogle({
-      code,
-      redirectUri
+    const result = await authService.loginWithGoogle({ code, redirectUri: callbackUrl });
+    return redirectToApp({
+      accessToken: result.accessToken,
+      refreshToken: result.refreshToken,
+      tokenType: result.tokenType,
+      provider: "google"
     });
-
-    return ok(
-      {
-        provider: "google",
-        ...result
-      },
-      requestId
-    );
-  });
+  } catch {
+    return redirectToApp({ error: "oauth_failed" });
+  }
 }
-
