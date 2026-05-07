@@ -12,14 +12,23 @@ export type MatchCandidate = {
   userId: string;
   fullName: string;
   age: number;
+  gender: string;
   city: string;
   country: string;
   compatibilityScore: number;
   distanceKm: number | null;
   bio?: string;
   photoUrl?: string;
+  /** Up to 6 gallery URLs for carousel (primary first). */
+  galleryPhotos?: string[];
   tags?: string[];
+  /** Interest labels you share with this person (for highlights). */
+  commonInterests?: string[];
   isVerified?: boolean;
+  /** Seen online in the last ~5 minutes (lastSeenAt). */
+  isOnline?: boolean;
+  /** Account created within the last 48h. */
+  isNewMember?: boolean;
 };
 
 type SwipeInput = {
@@ -31,8 +40,13 @@ type SwipeInput = {
 export type FeedOptions = {
   /** When true, skip geo / km filtering (countrywide discovery). */
   countrywide?: boolean;
-  /** Max distance in km (e.g. 5, 10, 50). Ignored if countrywide. */
+  /** Max distance in km (clamped 2–200 server-side). Ignored if countrywide. */
   radiusKm?: number;
+  /** Optional age window (inclusive). */
+  minAge?: number;
+  maxAge?: number;
+  /** When set and not ALL, only return profiles with this Gender enum value. */
+  preferGender?: string;
 };
 
 function ageFromDob(dob: Date) {
@@ -100,7 +114,7 @@ export class MatchingService {
       include: {
         profile: true,
         interests: { include: { interest: true } },
-        media: { orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }], take: 4 },
+        media: { orderBy: [{ isPrimary: "desc" }, { createdAt: "asc" }], take: 6 },
         verificationRecords: { where: { status: "APPROVED" }, take: 1 }
       },
       take: 200
@@ -126,10 +140,32 @@ export class MatchingService {
     const Sa = actor.desirabilityScore ?? 50;
 
     const countrywide = Boolean(options.countrywide);
-    const maxKm = countrywide
-      ? undefined
-      : (options.radiusKm ?? actor.profile.distanceKm ?? 50);
+    const rawRadius = options.radiusKm ?? actor.profile.distanceKm ?? 50;
+    const maxKm = countrywide ? undefined : Math.min(200, Math.max(2, Math.round(rawRadius)));
 
+    const minAgeOpt =
+      options.minAge != null
+        ? Math.min(99, Math.max(18, Math.round(options.minAge)))
+        : undefined;
+    const maxAgeOpt =
+      options.maxAge != null
+        ? Math.min(99, Math.max(18, Math.round(options.maxAge)))
+        : undefined;
+    let minAge = minAgeOpt;
+    let maxAge = maxAgeOpt;
+    if (minAge != null && maxAge != null && minAge > maxAge) {
+      const t = minAge;
+      minAge = maxAge;
+      maxAge = t;
+    }
+    const preferGender =
+      options.preferGender &&
+      options.preferGender !== "ALL" &&
+      ["MALE", "FEMALE", "NON_BINARY", "OTHER"].includes(options.preferGender)
+        ? options.preferGender
+        : undefined;
+
+    const actorInterestLabels = new Set(actor.interests.map((i) => i.interest.label));
     const actorInterestIds = new Set(actor.interests.map((i) => i.interestId));
     const actorLooking = new Set(actor.profile.lookingFor);
     const actorAge = ageFromDob(actor.profile.dateOfBirth);
@@ -140,6 +176,11 @@ export class MatchingService {
 
     for (const u of candidates) {
       if (!u.profile) continue;
+
+      const candAge = ageFromDob(u.profile.dateOfBirth);
+      if (minAge != null && candAge < minAge) continue;
+      if (maxAge != null && candAge > maxAge) continue;
+      if (preferGender && u.profile.gender !== preferGender) continue;
 
       let distanceKm: number | null = null;
       if (
@@ -179,7 +220,6 @@ export class MatchingService {
         distScore = 0.6;
       }
 
-      const candAge = ageFromDob(u.profile.dateOfBirth);
       const ageScore = 1 - Math.min(1, Math.abs(actorAge - candAge) / 25);
 
       let compatibilityScore =
@@ -221,21 +261,34 @@ export class MatchingService {
       compatibilityScore = Math.min(1, Math.max(0, compatibilityScore));
 
       const photoUrl = u.media[0]?.url;
+      const galleryPhotos = u.media.map((m) => m.url).filter(Boolean) as string[];
       const tags = u.interests.map((i) => i.interest.label);
       const isVerified = u.emailVerified || u.verificationRecords.length > 0;
+      const commonInterests = u.interests
+        .filter((i) => actorInterestIds.has(i.interestId))
+        .map((i) => i.interest.label);
+      const onlineMs = 5 * 60 * 1000;
+      const isOnline =
+        u.lastSeenAt != null && Date.now() - u.lastSeenAt.getTime() < onlineMs;
+      const isNewMember = Date.now() - u.createdAt.getTime() < 48 * 60 * 60 * 1000;
 
       scored.push({
         userId: u.id,
         fullName: u.profile.fullName,
         age: candAge,
+        gender: u.profile.gender,
         city: u.profile.city,
         country: u.profile.country,
         compatibilityScore,
         distanceKm,
         bio: u.profile.bio ?? undefined,
         photoUrl: photoUrl ?? undefined,
+        galleryPhotos: galleryPhotos.length ? galleryPhotos : undefined,
         tags: tags.length ? tags : undefined,
-        isVerified
+        commonInterests: commonInterests.length ? commonInterests : undefined,
+        isVerified,
+        isOnline,
+        isNewMember
       });
     }
 

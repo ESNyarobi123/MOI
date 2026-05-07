@@ -44,6 +44,16 @@ function publicOrigin(request: NextRequest): string {
   return env ? env.replace(/\/+$/, "") : "";
 }
 
+/** Prefer env so upload URLs match where /uploads is actually served (not always === API Host). */
+function mediaPublicOrigin(request: NextRequest): string {
+  const explicit =
+    process.env.PUBLIC_MEDIA_URL?.trim()?.replace(/\/+$/, "") ||
+    process.env.PUBLIC_APP_URL?.trim()?.replace(/\/+$/, "") ||
+    process.env.NEXT_PUBLIC_APP_URL?.trim()?.replace(/\/+$/, "");
+  if (explicit) return explicit;
+  return publicOrigin(request);
+}
+
 export async function POST(request: NextRequest) {
   return withErrorHandler(request, async () => {
     const auth = requireAuth(request);
@@ -70,7 +80,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const origin = publicOrigin(request);
+    const origin = mediaPublicOrigin(request);
     if (!origin) {
       return fail(
         {
