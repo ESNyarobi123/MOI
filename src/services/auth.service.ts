@@ -1,5 +1,9 @@
 import { Gender } from "@prisma/client";
 import { signAccessToken } from "@/lib/auth/jwt";
+import {
+  exchangeGoogleCodeForTokens,
+  fetchGoogleUserProfileByAccessToken
+} from "@/lib/auth/oauth";
 import { generateNumericOtp, hashOtpCode } from "@/lib/auth/otp-code";
 import { hashPassword, verifyPassword } from "@/lib/auth/password";
 import { generateRefreshTokenRaw, hashRefreshToken } from "@/lib/auth/refresh-token";
@@ -22,6 +26,12 @@ export type RegisterInput = {
 export type LoginInput = {
   email: string;
   password: string;
+};
+
+export type GoogleOAuthInput = {
+  accessToken?: string;
+  code?: string;
+  redirectUri?: string;
 };
 
 function normalizeEmail(email: string) {
@@ -189,6 +199,83 @@ export class AuthService {
     }
 
     return this.issueTokenPair(user.id, user.email);
+  }
+
+  async loginWithGoogle(input: GoogleOAuthInput) {
+    let accessToken = input.accessToken?.trim() || "";
+    if (!accessToken && input.code?.trim()) {
+      if (!input.redirectUri?.trim()) {
+        throw new AppError(
+          "BAD_REQUEST",
+          "redirectUri is required when using authorization code.",
+          400
+        );
+      }
+      const exchanged = await exchangeGoogleCodeForTokens({
+        code: input.code.trim(),
+        redirectUri: input.redirectUri.trim()
+      });
+      accessToken = exchanged.accessToken;
+    }
+
+    if (!accessToken) {
+      throw new AppError(
+        "BAD_REQUEST",
+        "Google access token (or code) is required.",
+        400
+      );
+    }
+
+    const profile = await fetchGoogleUserProfileByAccessToken(accessToken);
+    const email = normalizeEmail(profile.email);
+
+    const userByGoogleId = await prisma.user.findUnique({
+      where: { googleId: profile.sub }
+    });
+    if (userByGoogleId?.email) {
+      return this.issueTokenPair(userByGoogleId.id, userByGoogleId.email);
+    }
+
+    const existingByEmail = await prisma.user.findUnique({
+      where: { email }
+    });
+    if (existingByEmail?.email) {
+      const updated = await prisma.user.update({
+        where: { id: existingByEmail.id },
+        data: {
+          googleId: existingByEmail.googleId ?? profile.sub,
+          emailVerified: true
+        }
+      });
+      return this.issueTokenPair(updated.id, updated.email!);
+    }
+
+    const fullName =
+      profile.name?.trim() ||
+      [profile.given_name, profile.family_name].filter(Boolean).join(" ").trim() ||
+      "MoiDate User";
+    const dateOfBirth = new Date("1998-01-01T00:00:00.000Z");
+
+    const created = await prisma.user.create({
+      data: {
+        email,
+        googleId: profile.sub,
+        emailVerified: true,
+        isAgeVerified: false,
+        profile: {
+          create: {
+            fullName,
+            dateOfBirth,
+            gender: "OTHER",
+            city: "Unknown",
+            country: "Unknown",
+            lookingFor: ["DATING"]
+          }
+        }
+      }
+    });
+
+    return this.issueTokenPair(created.id, created.email!);
   }
 
   async refresh(refreshTokenRaw: string) {
