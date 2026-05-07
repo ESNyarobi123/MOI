@@ -17,7 +17,15 @@ export async function GET(request: NextRequest) {
       return fail({ code: "BAD_REQUEST", message: ERROR_MESSAGES.BAD_REQUEST }, requestId);
     }
 
-    const thread = await chatService.getThreadForMobile(chatId, auth.userId);
+    const limitRaw = searchParams.get("limit");
+    const beforeMessageId = searchParams.get("before");
+    const parsedLimit = limitRaw ? Number.parseInt(limitRaw, 10) : Number.NaN;
+    const limit = Number.isFinite(parsedLimit) ? parsedLimit : 200;
+
+    const thread = await chatService.getThreadForMobile(chatId, auth.userId, {
+      limit,
+      beforeMessageId: beforeMessageId?.trim() ? beforeMessageId.trim() : null
+    });
     return ok(thread, requestId);
   });
 }

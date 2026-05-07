@@ -2,13 +2,25 @@
  * Custom Next.js + Socket.io server (local / VM). Realtime does not run on Vercel serverless.
  * Run: npm run dev:full   or   npm run start:full
  * Plain `next dev` still works without WebSocket transport.
+ *
+ * HTTP POST /__moi/realtime/emit — internal broadcast when REST API runs elsewhere (set REALTIME_EMIT_URL + REALTIME_EMIT_SECRET on API host).
  */
+import type { IncomingMessage } from "node:http";
 import { createServer } from "node:http";
 import { parse } from "node:url";
 import next from "next";
 import { Server as SocketIOServer } from "socket.io";
 import { verifyAccessToken } from "./src/lib/auth/jwt";
 import { setSocketIo } from "./src/lib/socket/io-singleton";
+
+function readRequestBody(req: IncomingMessage): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    req.on("data", (chunk) => chunks.push(chunk));
+    req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+    req.on("error", reject);
+  });
+}
 
 const dev = process.env.NODE_ENV !== "production";
 const port = parseInt(process.env.PORT ?? "3000", 10);
@@ -17,21 +29,64 @@ const app = next({ dev });
 const handle = app.getRequestHandler();
 
 void app.prepare().then(() => {
-  const server = createServer((req, res) => {
-    const parsedUrl = parse(req.url ?? "", true);
-    void handle(req, res, parsedUrl);
+  let io: SocketIOServer | null = null;
+
+  const server = createServer(async (req, res) => {
+    const parsed = parse(req.url ?? "", true);
+
+    if (req.method === "POST" && parsed.pathname === "/__moi/realtime/emit") {
+      try {
+        const secret = process.env.REALTIME_EMIT_SECRET;
+        if (
+          !secret ||
+          typeof req.headers["x-moi-emit-secret"] !== "string" ||
+          req.headers["x-moi-emit-secret"] !== secret
+        ) {
+          res.statusCode = 401;
+          res.setHeader("Content-Type", "text/plain");
+          res.end("Unauthorized");
+          return;
+        }
+
+        const raw = await readRequestBody(req);
+        const body = JSON.parse(raw) as {
+          room?: string;
+          event?: string;
+          payload?: unknown;
+        };
+        if (!body.room || typeof body.event !== "string") {
+          res.statusCode = 400;
+          res.end("Bad request");
+          return;
+        }
+        if (!io) {
+          res.statusCode = 503;
+          res.end("Socket not ready");
+          return;
+        }
+        io.to(body.room).emit(body.event, body.payload ?? null);
+        res.statusCode = 204;
+        res.end();
+      } catch {
+        res.statusCode = 500;
+        res.end();
+      }
+      return;
+    }
+
+    void handle(req, res, parsed);
   });
 
-  const corsOrigin = process.env.SOCKET_CORS_ORIGIN?.split(",").map((s) => s.trim()) ?? true;
+  const corsOrigin =
+    process.env.SOCKET_CORS_ORIGIN?.split(",").map((s) => s.trim()) ?? true;
 
-  const io = new SocketIOServer(server, {
+  io = new SocketIOServer(server, {
     path: "/socket.io",
-    cors: { origin: corsOrigin, methods: ["GET", "POST"] }
+    cors: { origin: corsOrigin, methods: ["GET", "POST"] },
   });
 
   io.use((socket, nextCb) => {
     try {
-      // Client: io({ auth: { token: accessJwt } }) — same JWT as Bearer for REST.
       const token = socket.handshake.auth?.token as string | undefined;
       if (!token) {
         nextCb(new Error("Unauthorized"));
@@ -61,12 +116,26 @@ void app.prepare().then(() => {
       }
     });
 
+    socket.broadcast.emit("presence", {
+      userId,
+      status: "online",
+      at: new Date().toISOString(),
+    });
+
+    socket.on("disconnect", () => {
+      socket.broadcast.emit("presence", {
+        userId,
+        status: "offline",
+        at: new Date().toISOString(),
+      });
+    });
+
     socket.on("presence", (payload: { status?: string }) => {
       const status = payload?.status === "offline" ? "offline" : "online";
       socket.broadcast.emit("presence", {
         userId,
         status,
-        at: new Date().toISOString()
+        at: new Date().toISOString(),
       });
     });
 
@@ -76,7 +145,7 @@ void app.prepare().then(() => {
         chatId: payload.chatId,
         userId,
         typing: Boolean(payload.typing),
-        at: new Date().toISOString()
+        at: new Date().toISOString(),
       });
     });
   });
@@ -84,6 +153,8 @@ void app.prepare().then(() => {
   setSocketIo(io);
 
   server.listen(port, () => {
-    console.info(`> Ready on http://localhost:${port} (Socket.io at /socket.io)`);
+    console.info(
+      `> Ready on http://localhost:${port} (Socket.io at /socket.io; internal emit at POST /__moi/realtime/emit)`
+    );
   });
 });

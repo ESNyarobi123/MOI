@@ -2,7 +2,7 @@ import { MessageType } from "@prisma/client";
 import { moderateTextProduction } from "@/lib/ai/openai-moderate";
 import { prisma } from "@/lib/db/prisma";
 import { shouldBlurMediaMessage } from "@/lib/safety/media-scan";
-import { getSocketIo } from "@/lib/socket/io-singleton";
+import { emitToChatRoom } from "@/lib/socket/emit";
 import { desirabilityService } from "@/services/desirability.service";
 import { matchingService } from "@/services/matching.service";
 import { notificationService } from "@/services/notification.service";
@@ -159,14 +159,42 @@ export class ChatService {
     });
   }
 
-  async getMessages(chatId: string, userId: string) {
+  /**
+   * Latest-first window: without `beforeMessageId`, returns the newest `limit` messages
+   * (ascending chronological order). With `beforeMessageId`, returns up to `limit` messages
+   * strictly older than that cursor (still ascending within the page).
+   */
+  async getMessagesWindow(
+    chatId: string,
+    userId: string,
+    opts: { limit: number; beforeMessageId?: string | null }
+  ) {
     await this.assertCanUseChat(chatId, userId, "read");
 
-    return prisma.message.findMany({
-      where: { chatId },
-      orderBy: { createdAt: "asc" },
-      take: 200
+    const limit = Math.min(Math.max(opts.limit, 1), 200);
+
+    let cursorDate: Date | undefined;
+    if (opts.beforeMessageId) {
+      const cur = await prisma.message.findFirst({
+        where: { id: opts.beforeMessageId, chatId }
+      });
+      if (cur) cursorDate = cur.createdAt;
+    }
+
+    const rows = await prisma.message.findMany({
+      where: {
+        chatId,
+        ...(cursorDate ? { createdAt: { lt: cursorDate } } : {})
+      },
+      orderBy: { createdAt: "desc" },
+      take: limit + 1
     });
+
+    const hasMore = rows.length > limit;
+    const page = hasMore ? rows.slice(0, limit) : rows;
+    const asc = [...page].reverse();
+
+    return { messages: asc, hasMoreOlder: hasMore };
   }
 
   async markSeen(chatId: string, userId: string) {
@@ -260,8 +288,16 @@ export class ChatService {
     });
   }
 
-  async getThreadForMobile(chatId: string, userId: string) {
-    const messages = await this.getMessages(chatId, userId);
+  async getThreadForMobile(
+    chatId: string,
+    userId: string,
+    query?: { limit?: number; beforeMessageId?: string | null }
+  ) {
+    const limit = query?.limit ?? 200;
+    const { messages, hasMoreOlder } = await this.getMessagesWindow(chatId, userId, {
+      limit,
+      beforeMessageId: query?.beforeMessageId ?? null
+    });
 
     const membership = await prisma.chatParticipant.findUnique({
       where: { chatId_userId: { chatId, userId } },
@@ -300,6 +336,7 @@ export class ChatService {
     return {
       items: messages,
       messages: mappedMessages,
+      hasMoreOlder,
       chat: {
         chatId,
         partnerId,
@@ -311,7 +348,7 @@ export class ChatService {
   }
 
   private emitChat(event: string, chatId: string, payload: unknown) {
-    getSocketIo()?.to(`chat:${chatId}`).emit(event, payload);
+    emitToChatRoom(chatId, event, payload);
   }
 
   private async assertCanUseChat(
