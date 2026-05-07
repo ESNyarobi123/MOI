@@ -11,11 +11,13 @@ export async function GET(request: NextRequest) {
   let appCallback: string | null = null;
   try {
     if (state) {
-      const decoded = JSON.parse(Buffer.from(state, "base64url").toString("utf-8"));
+      // Try base64 (standard) first, then base64url
+      const buf = Buffer.from(state, "base64");
+      const decoded = JSON.parse(buf.toString("utf-8"));
       appCallback = decoded?.appCallback ?? null;
     }
   } catch {
-    // state was a plain UUID from older flow — no appCallback
+    // state was a plain UUID or unparseable — no appCallback
   }
 
   function redirectToApp(params: Record<string, string>) {
