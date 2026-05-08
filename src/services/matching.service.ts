@@ -108,8 +108,7 @@ export class MatchingService {
       id: { notIn: excludeIds },
       isActive: true,
       isSuspended: false,
-      emailVerified: true,
-      isAgeVerified: true,
+      isBanned: false,
       profile: { is: { showProfile: true } }
     };
 
@@ -191,9 +190,7 @@ export class MatchingService {
         aLat != null &&
         aLng != null &&
         u.profile.lat != null &&
-        u.profile.lng != null &&
-        !u.profile.hideExactLocation &&
-        !actor.profile.hideExactLocation
+        u.profile.lng != null
       ) {
         distanceKm = haversineKm(aLat, aLng, u.profile.lat, u.profile.lng);
       }
@@ -202,8 +199,7 @@ export class MatchingService {
         if (distanceKm != null) {
           if (distanceKm > maxKm) continue;
         } else {
-          if (maxKm < 50 && u.profile.city !== actor.profile.city) continue;
-          if (maxKm >= 50 && u.profile.country !== actor.profile.country) continue;
+          if (u.profile.country !== actor.profile.country) continue;
         }
       }
 
@@ -276,6 +272,9 @@ export class MatchingService {
         u.lastSeenAt != null && Date.now() - u.lastSeenAt.getTime() < onlineMs;
       const isNewMember = Date.now() - u.createdAt.getTime() < 48 * 60 * 60 * 1000;
 
+      const showDistance =
+        distanceKm != null && !u.profile.hideExactLocation && !actor.profile.hideExactLocation;
+
       scored.push({
         userId: u.id,
         fullName: u.profile.fullName,
@@ -284,7 +283,7 @@ export class MatchingService {
         city: u.profile.city,
         country: u.profile.country,
         compatibilityScore,
-        distanceKm,
+        distanceKm: showDistance ? distanceKm : null,
         bio: u.profile.bio ?? undefined,
         photoUrl: photoUrl ?? undefined,
         galleryPhotos: galleryPhotos.length ? galleryPhotos : undefined,
@@ -353,6 +352,13 @@ export class MatchingService {
         action: actionMap[input.action]
       }
     });
+
+    // Notify the target user about the like/superlike (async, don't block)
+    if (input.action === "like") {
+      void notificationService.notifyProfileLike(input.targetUserId, input.actorUserId);
+    } else if (input.action === "superlike") {
+      void notificationService.notifySuperLike(input.targetUserId, input.actorUserId);
+    }
 
     const reverseSwipe = await prisma.swipe.findUnique({
       where: {

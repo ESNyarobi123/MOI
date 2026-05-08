@@ -98,18 +98,22 @@ model User {
   subscriptions       Subscription[]
   adminAnnouncements  Announcement[]       @relation("announcements_created_by")
   notifications       Notification[]
+  statuses            UserStatus[]
 }
 
 model Notification {
-  id        String    @id @default(cuid())
-  userId    String
-  kind      String
-  title     String
-  body      String
-  refId     String?
-  readAt    DateTime?
-  createdAt DateTime  @default(now())
-  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id         String    @id @default(cuid())
+  userId     String
+  kind       String
+  title      String
+  body       String
+  refId      String?
+  actorId    String?
+  actorName  String?
+  actorPhoto String?
+  readAt     DateTime?
+  createdAt  DateTime  @default(now())
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, createdAt])
 }
@@ -370,4 +374,30 @@ model Announcement {
   createdBy       String
   createdAt       DateTime  @default(now())
   creator         User      @relation("announcements_created_by", fields: [createdBy], references: [id], onDelete: Cascade)
+}
+
+model UserStatus {
+  id        String   @id @default(cuid())
+  userId    String
+  imageUrl  String
+  caption   String?
+  expiresAt DateTime
+  viewCount Int      @default(0)
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  likes     StatusLike[]
+
+  @@index([userId, expiresAt])
+}
+
+model StatusLike {
+  id        String   @id @default(cuid())
+  statusId  String
+  userId    String
+  createdAt DateTime @default(now())
+  status    UserStatus @relation(fields: [statusId], references: [id], onDelete: Cascade)
+
+  @@unique([statusId, userId])
+  @@index([statusId])
 }

@@ -4,7 +4,7 @@ import path from "path";
 import type { NextRequest } from "next/server";
 import { ERROR_MESSAGES } from "@/constants/errors";
 import { requireAuth } from "@/middleware/auth.middleware";
-import { mediaService } from "@/services/media.service";
+import { statusService } from "@/services/status.service";
 import { withErrorHandler } from "@/utils/handlers";
 import { fail, ok } from "@/utils/response";
 
@@ -32,26 +32,18 @@ function parseBase64Image(input: string): { buffer: Buffer; ext: string } | null
   return { buffer, ext };
 }
 
-function publicOrigin(request: NextRequest): string {
-  const host = request.headers.get("x-forwarded-host") ?? request.headers.get("host");
-  const proto =
-    request.headers.get("x-forwarded-proto") ?? (host?.includes("localhost") ? "http" : "https");
-  if (host) return `${proto}://${host}`;
-  const env =
-    process.env.PUBLIC_APP_URL?.trim() ||
-    process.env.APP_URL?.trim() ||
-    process.env.API_BASE_URL?.trim();
-  return env ? env.replace(/\/+$/, "") : "";
-}
-
-/** Prefer env so upload URLs match where /uploads is actually served (not always === API Host). */
 function mediaPublicOrigin(request: NextRequest): string {
   const explicit =
     process.env.PUBLIC_MEDIA_URL?.trim()?.replace(/\/+$/, "") ||
     process.env.PUBLIC_APP_URL?.trim()?.replace(/\/+$/, "") ||
     process.env.NEXT_PUBLIC_APP_URL?.trim()?.replace(/\/+$/, "");
   if (explicit) return explicit;
-  return publicOrigin(request);
+
+  const host = request.headers.get("x-forwarded-host") ?? request.headers.get("host");
+  const proto =
+    request.headers.get("x-forwarded-proto") ?? (host?.includes("localhost") ? "http" : "https");
+  if (host) return `${proto}://${host}`;
+  return "";
 }
 
 export async function POST(request: NextRequest) {
@@ -67,6 +59,7 @@ export async function POST(request: NextRequest) {
         : typeof body?.dataUrl === "string"
           ? body.dataUrl
           : null;
+    const caption = typeof body?.caption === "string" ? body.caption.slice(0, 280) : undefined;
 
     if (!imageBase64) {
       return fail({ code: "BAD_REQUEST", message: ERROR_MESSAGES.BAD_REQUEST }, requestId);
@@ -83,31 +76,26 @@ export async function POST(request: NextRequest) {
     const origin = mediaPublicOrigin(request);
     if (!origin) {
       return fail(
-        {
-          code: "SERVICE_UNAVAILABLE",
-          message: "Server public URL is not configured; cannot build media URL."
-        },
+        { code: "SERVICE_UNAVAILABLE", message: "Server public URL is not configured." },
         requestId
       );
     }
 
-    const userDir = path.join(process.cwd(), "public", "uploads", auth.userId);
-    await mkdir(userDir, { recursive: true });
+    const statusDir = path.join(process.cwd(), "public", "uploads", "status", auth.userId);
+    await mkdir(statusDir, { recursive: true });
     const filename = `${randomBytes(12).toString("hex")}.${parsed.ext}`;
-    const filePath = path.join(userDir, filename);
+    const filePath = path.join(statusDir, filename);
     await writeFile(filePath, parsed.buffer);
 
-    const publicPath = `/api/v1/uploads/${auth.userId}/${filename}`;
-    const url = `${origin}${publicPath}`;
+    const publicPath = `/api/v1/uploads/status/${auth.userId}/${filename}`;
+    const imageUrl = `${origin}${publicPath}`;
 
-    const priorCount = await mediaService.count(auth.userId);
-    const item = await mediaService.create({
+    const status = await statusService.create({
       userId: auth.userId,
-      url,
-      mediaType: "photo",
-      isPrimary: priorCount === 0
+      imageUrl,
+      caption,
     });
 
-    return ok({ item, url }, requestId, 201);
+    return ok({ status, imageUrl }, requestId, 201);
   });
 }
