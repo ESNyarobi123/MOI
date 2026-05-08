@@ -1,5 +1,8 @@
 export async function GET(request: Request) {
-  const { origin } = new URL(request.url);
+  const headers = request.headers;
+  const proto = headers.get("x-forwarded-proto") ?? new URL(request.url).protocol.replace(":", "");
+  const host = headers.get("x-forwarded-host") ?? headers.get("host") ?? new URL(request.url).host;
+  const origin = `${proto}://${host}`;
   const openApiUrl = `${origin}/api/v1/openapi`;
 
   const html = `<!DOCTYPE html>

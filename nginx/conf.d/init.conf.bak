@@ -1,0 +1,16 @@
+# Temporary HTTP-only config used ONLY during initial cert issuance.
+# After certs are obtained, this file is replaced by moidate.conf.
+
+server {
+    listen 80;
+    server_name moidate.online www.moidate.online apis.moidate.online;
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    location / {
+        return 200 "MoiDate - starting up...";
+        add_header Content-Type text/plain;
+    }
+}

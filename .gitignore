@@ -18,3 +18,14 @@ googlauth.txt
 
 # User-uploaded media (local dev / simple hosting)
 public/uploads/
+
+# TLS / Certbot — NEVER commit certificates or private keys
+certbot/
+*.pem
+*.key
+*.crt
+private_key.json
+
+# Build artifacts
+tsconfig.tsbuildinfo
+

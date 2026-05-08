@@ -5,7 +5,10 @@ export const openApiSpec = {
     version: "1.0.0",
     description: "Backend API for MoiDate dating platform."
   },
-  servers: [{ url: "/api/v1", description: "Local v1 API" }],
+  servers: [
+    { url: "https://apis.moidate.online/api/v1", description: "Production API" },
+    { url: "/api/v1", description: "Local / relative" }
+  ],
   components: {
     securitySchemes: {
       bearerAuth: {
