@@ -17,6 +17,10 @@ export function emitToChatRoom(chatId: string, event: string, payload: unknown):
   emitToSocketRoom(`chat:${chatId}`, event, payload);
 }
 
+export function emitToUserRoom(userId: string, event: string, payload: unknown): void {
+  emitToSocketRoom(`user:${userId}`, event, payload);
+}
+
 async function emitToSocketRoomRemote(
   room: string,
   event: string,

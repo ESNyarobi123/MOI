@@ -3,6 +3,8 @@ import { SwipeAction } from "@prisma/client";
 import { applyPineconeBoost } from "@/lib/ai/pinecone-boost";
 import { haversineKm } from "@/lib/location/geo";
 import { prisma } from "@/lib/db/prisma";
+import { emitToUserRoom } from "@/lib/socket/emit";
+import { SOCKET_EVENTS } from "@/lib/socket/events";
 import { desirabilityService } from "@/services/desirability.service";
 import { notificationService } from "@/services/notification.service";
 import { userService } from "@/services/user.service";
@@ -381,6 +383,36 @@ export class MatchingService {
           input.actorUserId,
           input.targetUserId
         );
+
+        // Emit real-time match event to both users
+        const actorProfile = await prisma.userProfile.findUnique({
+          where: { userId: input.actorUserId },
+          select: { fullName: true }
+        });
+        const targetProfile = await prisma.userProfile.findUnique({
+          where: { userId: input.targetUserId },
+          select: { fullName: true }
+        });
+
+        // Notify the actor (swiper)
+        emitToUserRoom(input.actorUserId, SOCKET_EVENTS.MATCH_CREATED, {
+          matchId: matchRow.id,
+          matchedWith: {
+            userId: input.targetUserId,
+            name: targetProfile?.fullName ?? "Someone"
+          },
+          matchedAt: new Date().toISOString()
+        });
+
+        // Notify the target (was liked)
+        emitToUserRoom(input.targetUserId, SOCKET_EVENTS.MATCH_CREATED, {
+          matchId: matchRow.id,
+          matchedWith: {
+            userId: input.actorUserId,
+            name: actorProfile?.fullName ?? "Someone"
+          },
+          matchedAt: new Date().toISOString()
+        });
       }
     }
 

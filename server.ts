@@ -116,6 +116,18 @@ void app.prepare().then(() => {
       }
     });
 
+    socket.on("join:user", (targetUserId: string) => {
+      if (typeof targetUserId === "string" && targetUserId === userId) {
+        void socket.join(`user:${targetUserId}`);
+      }
+    });
+
+    socket.on("leave:user", (targetUserId: string) => {
+      if (typeof targetUserId === "string" && targetUserId === userId) {
+        void socket.leave(`user:${targetUserId}`);
+      }
+    });
+
     socket.broadcast.emit("presence", {
       userId,
       status: "online",

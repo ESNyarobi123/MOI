@@ -7,6 +7,15 @@ import type {
   TypingPayload
 } from "@/types/socket.types";
 
+export type MatchCreatedPayload = {
+  matchId: string;
+  matchedWith: {
+    userId: string;
+    name: string;
+  };
+  matchedAt: string;
+};
+
 class RealtimeGateway {
   private readonly bus = new EventEmitter();
   private readonly presence = new Map<string, PresencePayload>();
